@@ -11,6 +11,9 @@ export default {
         sm: ".1875rem", /* 3px */
       },
       colors: {
+        "electric-blue": "#00FFFF",
+        "stealth-black": "#09090b",
+        "neon-green": "#39ff14",
         // Flat / base colors (regular buttons)
         background: "hsl(var(--background) / <alpha-value>)",
         foreground: "hsl(var(--foreground) / <alpha-value>)",
@@ -83,6 +86,8 @@ export default {
         },
       },
       fontFamily: {
+        display: ["Orbitron", "sans-serif"],
+        body: ["Inter", "sans-serif"],
         sans: ["var(--font-sans)"],
         serif: ["var(--font-serif)"],
         mono: ["var(--font-mono)"],
