@@ -74,7 +74,7 @@ type Intent =
   | "unknown";
 
 export function MissionControl() {
-  const { localSnipers, localSavings, totalSavings, deleteSniper, addSniper, killSniper, updateSniperPrice } = useSavings();
+  const { localSnipers, localSavings, totalSavings, deleteSniper, addSniper, killSniper, updateSniperPrice, trackedFlights } = useSavings();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -651,26 +651,35 @@ export function MissionControl() {
       // INTERCEPT command: Buy/Book flight
       const hasInterceptCommand = /intercept|buy.*flight|book.*flight|purchase.*flight|book the flight|buy the flight/i.test(command);
       if (hasInterceptCommand) {
-        // Get real-time flight data from localStorage
-        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
-        const dubaiFlight = trackedFlights.find((f: any) => 
-          f.destinationCode === "DXB" || f.originCode === "BOM" || 
-          f.destination?.toLowerCase().includes("dubai") ||
-          (f.originCode === "BOM" && f.destinationCode === "DXB")
-        );
-        
-        if (dubaiFlight) {
-          const currentPrice = Number(dubaiFlight.currentPrice || dubaiFlight.originalPrice);
-          const originalPrice = Number(dubaiFlight.originalPrice || currentPrice);
+        // Use real-time flight data from global state (trackedFlights array)
+        if (trackedFlights && trackedFlights.length > 0) {
+          const flight = trackedFlights[0]; // Get first tracked flight
+          const currentPrice = Number(flight.currentPrice || flight.originalPrice);
+          const originalPrice = Number(flight.originalPrice || currentPrice);
           const savings = originalPrice - currentPrice;
           
           // Execute INTERCEPT - open booking URL with affiliate tag
-          const bookingUrl = `https://example.com/flights/BOM-DXB?price=${currentPrice}`;
+          const bookingUrl = `https://example.com/flights/${flight.originCode}-${flight.destinationCode}?price=${currentPrice}`;
           const separator = bookingUrl.includes('?') ? '&' : '?';
           const affiliateUrl = `${bookingUrl}${separator}tag=commander-21`;
           window.open(affiliateUrl, '_blank', 'noopener,noreferrer');
           
-          addAIMessage(`INTERCEPT executed, Commander! Opening booking for BOM → DXB at ${formatCurrency(currentPrice)}. You're saving ${formatCurrency(savings)} on this flight.`, "general");
+          // Add green pulse effect message with visual indicator
+          addAIMessage(`🟢 **INTERCEPT EXECUTED** 🟢\n\nCommander, opening booking for ${flight.origin} (${flight.originCode}) → ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)}. You're saving ${formatCurrency(savings)} on this flight.`, "general");
+          
+          // Trigger green pulse effect similar to Kill button
+          const chatPanel = document.querySelector('[class*="bg-zinc-900/95"]') as HTMLElement;
+          if (chatPanel) {
+            // Add green pulse animation
+            chatPanel.style.animation = 'pulse 2s infinite';
+            chatPanel.style.boxShadow = '0 0 20px rgba(34, 197, 94, 0.8), 0 0 40px rgba(34, 197, 94, 0.4)';
+            chatPanel.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+            setTimeout(() => {
+              chatPanel.style.animation = '';
+              chatPanel.style.boxShadow = '';
+              chatPanel.style.borderColor = '';
+            }, 2000);
+          }
         } else {
           addAIMessage("Commander, no tracked flight found to intercept. Please track a flight first.", "general");
         }
@@ -678,32 +687,29 @@ export function MissionControl() {
       }
       
       if (hasIdentityQuery && (hasFlightStatusQuery || hasSniperStatusQuery)) {
-        // Multi-intent: Identity + Status
-        let response = "I'm Star, your tactical AI assistant, Commander. ";
+        // Multi-intent: Identity + Status - Use exact format requested
+        let response = "I am Star, your tactical operative. ";
         
         if (hasFlightStatusQuery) {
-          // Get real-time flight data from localStorage (real-time from arrays)
-          const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
-          const dubaiFlight = trackedFlights.find((f: any) => 
-            f.destinationCode === "DXB" || f.originCode === "BOM" || 
-            f.destination?.toLowerCase().includes("dubai") ||
-            (f.originCode === "BOM" && f.destinationCode === "DXB")
-          );
-          
-          if (dubaiFlight) {
-            // Use real-time values from the flight data
-            const currentPrice = Number(dubaiFlight.currentPrice || dubaiFlight.originalPrice);
-            const originalPrice = Number(dubaiFlight.originalPrice || currentPrice);
+          // Use real-time flight data from global state (trackedFlights array)
+          if (trackedFlights && trackedFlights.length > 0) {
+            const flight = trackedFlights[0]; // Get first tracked flight
+            const currentPrice = Number(flight.currentPrice || flight.originalPrice);
+            const originalPrice = Number(flight.originalPrice || currentPrice);
             const savings = originalPrice - currentPrice;
-            response += `Your BOM → DXB flight status: Price: ${formatCurrency(currentPrice)}, Savings: ${formatCurrency(savings)}. `;
+            const savingsPercentage = originalPrice > 0 ? Math.round((savings / originalPrice) * 100) : 0;
+            
+            response += `Currently tracking ${trackedFlights.length} flight${trackedFlights.length > 1 ? 's' : ''}: ${flight.origin} (${flight.originCode}) to ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)} with a ${savingsPercentage}% price drop.`;
           } else {
-            response += "No tracked flights found. ";
+            response += "No tracked flights found.";
           }
         }
         
         if (hasSniperStatusQuery && localSnipers.length > 0) {
           // Use real-time sniper data
-          response += `You have ${localSnipers.length} active sniper${localSnipers.length > 1 ? 's' : ''} tracking.`;
+          if (!hasFlightStatusQuery) {
+            response += `You have ${localSnipers.length} active sniper${localSnipers.length > 1 ? 's' : ''} tracking.`;
+          }
         }
         
         addAIMessage(response.trim(), "general");
@@ -953,11 +959,12 @@ export function MissionControl() {
           return current < original;
         })() : false;
         
-        // Get flights data from localStorage (stored by Logistics page)
-        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
-        const dubaiFlight = trackedFlights.find((f: any) => 
-          f.destinationCode === "DXB" || f.destination?.toLowerCase().includes("dubai")
-        );
+        // Get flights data from global state (trackedFlights array)
+        const dubaiFlight = trackedFlights && trackedFlights.length > 0 
+          ? trackedFlights.find((f: any) => 
+              f.destinationCode === "DXB" || f.destination?.toLowerCase().includes("dubai")
+            ) || trackedFlights[0]
+          : null;
         
         // Calculate flight price change if available
         let flightUpdate = "";
@@ -988,9 +995,8 @@ export function MissionControl() {
       if (isWhatCanYouDo) {
         // Capability Menu: Dynamic response based on active missions
         const activeMissionCount = localSnipers.length;
-        // Get real-time flight count
-        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
-        const flightCount = trackedFlights.length;
+        // Get real-time flight count from global state
+        const flightCount = trackedFlights ? trackedFlights.length : 0;
         
         let response = `I'm Star, your tactical AI assistant. I can analyze price differences, execute purchase orders, track flights, and give you status reports. `;
         if (activeMissionCount > 0) {

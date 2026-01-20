@@ -32,6 +32,19 @@ export interface SniperWithOriginal extends Sniper {
 const SAVINGS_STORAGE_KEY = "savings-feed-items";
 const SNIPERS_STORAGE_KEY = "snipers-items";
 const KILLED_SNIPERS_STORAGE_KEY = "killed-snipers-items";
+const TRACKED_FLIGHTS_KEY = "tracked-flights";
+
+interface TrackedFlight {
+  id: string;
+  origin: string;
+  originCode: string;
+  destination: string;
+  destinationCode: string;
+  originalPrice: number;
+  currentPrice: number;
+  status: "tracked" | "killed";
+  trackedAt: Date;
+}
 
 const mockSavings: Saving[] = [
   {
@@ -70,6 +83,7 @@ interface SavingsContextType {
   killSniper: (id: number) => void;
   killSaving: (id: string) => void;
   updateSniperPrice: (id: number, newPrice: number) => void;
+  trackedFlights: TrackedFlight[];
 }
 
 // Helper function to load savings from localStorage
@@ -179,10 +193,44 @@ const SNIPER_ORIGINAL_PRICES_KEY = "sniper-original-prices";
 // Store categories for snipers
 const SNIPER_CATEGORIES_KEY = "sniper-categories";
 
+// Helper function to load flights from localStorage
+function loadFlightsFromStorage(): TrackedFlight[] {
+  try {
+    const stored = localStorage.getItem(TRACKED_FLIGHTS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed.map((f: any) => ({
+        ...f,
+        trackedAt: new Date(f.trackedAt),
+      }));
+    }
+  } catch (error) {
+    console.error("Error loading flights from storage:", error);
+  }
+  // Default flight
+  return [
+    {
+      id: "1",
+      origin: "Mumbai",
+      originCode: "BOM",
+      destination: "Dubai",
+      destinationCode: "DXB",
+      originalPrice: 22000,
+      currentPrice: 18500,
+      status: "tracked",
+      trackedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+    },
+  ];
+}
+
 function App() {
   const { toast } = useToast();
   
   // Persist Kill Details and Total Savings - don't reset on app load
+  const [trackedFlights, setTrackedFlights] = useState<TrackedFlight[]>(() => {
+    return loadFlightsFromStorage();
+  });
+
   const [localSavings, setLocalSavings] = useState<Saving[]>(() => {
     // Load from storage - MY SAVINGS list (empty by default)
     return loadSavingsFromStorage();
@@ -241,6 +289,15 @@ function App() {
   useEffect(() => {
     saveSnipersToStorage(localSnipers);
   }, [localSnipers]);
+
+  // Save to localStorage whenever flights change
+  useEffect(() => {
+    try {
+      localStorage.setItem(TRACKED_FLIGHTS_KEY, JSON.stringify(trackedFlights));
+    } catch (error) {
+      console.error("Error saving flights to storage:", error);
+    }
+  }, [trackedFlights]);
 
 
   const addSaving = (saving: Saving) => {
@@ -383,6 +440,7 @@ function App() {
           killSniper,
           killSaving,
           updateSniperPrice,
+          trackedFlights,
         }}>
           <div className="min-h-screen bg-zinc-950 flex">
             <Navigation />
