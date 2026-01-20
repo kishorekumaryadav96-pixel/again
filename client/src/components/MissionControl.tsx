@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, X, Mic, MicOff, Send } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "wouter";
 import { useSavings } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,7 @@ interface Message {
   text: string;
   sender: "ai" | "user";
   timestamp: Date;
+  flightOptions?: { flightId: string; flight: any }; // For interactive flight buttons
 }
 
 interface ConversationTopic {
@@ -74,8 +76,10 @@ type Intent =
   | "unknown";
 
 export function MissionControl() {
-  const { localSnipers, localSavings, totalSavings, deleteSniper, addSniper, killSniper, updateSniperPrice, trackedFlights } = useSavings();
+  const { localSnipers, localSavings, totalSavings, deleteSniper, addSniper, killSniper, updateSniperPrice, trackedFlights, setTrackedFlights, subscriptions, restoreSubscription, terminateSubscription, addSaving } = useSavings();
+  const [location, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const chatPanelRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isListening, setIsListening] = useState(false);
@@ -84,7 +88,8 @@ export function MissionControl() {
   const [discountedItems, setDiscountedItems] = useState<Sniper[]>([]);
   const [showDiscountedItems, setShowDiscountedItems] = useState(false);
   const [currentDiscountedItem, setCurrentDiscountedItem] = useState<number | null>(null);
-  const [pendingQuestion, setPendingQuestion] = useState<"kill" | "checkOther" | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<"kill" | "checkOther" | "intercept" | "terminateGhost" | null>(null);
+  const [pendingInterceptFlight, setPendingInterceptFlight] = useState<string | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationTopic[]>([]);
   const [multiStepFlow, setMultiStepFlow] = useState<{ type: "product_search"; step: "budget" | "suggestions" | "deploy"; data?: any } | null>(null);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
@@ -140,9 +145,46 @@ export function MissionControl() {
   useEffect(() => {
     if (isOpen && !hasIntroduced && messages.length === 0) {
       setHasIntroduced(true);
-      addAIMessage("Hello Commander, I'm Star, your AI assistant. I'm here to help you track snipers, monitor flights, and manage your financial targets. How can I assist you today?", "general");
+      // Identity Check: Use exact format
+      // Identity: Star's greeting must show exact counts (3 flights, 6 snipers, 2 active, 1 ghost)
+      const flightCount = trackedFlights ? trackedFlights.length : 0;
+      const sniperCount = localSnipers.length;
+      // Subscription Purge: Filter out terminated subscriptions from counts
+      const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active" && s.isGhost !== true && s.status !== "terminated");
+      const ghostSubscriptions = subscriptions.filter((s: any) => s.isGhost === true && s.status !== "terminated");
+      
+      const introMessage = `I am Star, your tactical operative. Monitoring ${flightCount} flight${flightCount !== 1 ? 's' : ''}, ${sniperCount} sniper${sniperCount !== 1 ? 's' : ''}, ${activeSubscriptions.length} active subscription${activeSubscriptions.length !== 1 ? 's' : ''}, and ${ghostSubscriptions.length} ghost subscription${ghostSubscriptions.length !== 1 ? 's' : ''}. How can I assist you today?`;
+      addAIMessage(introMessage, "general");
     }
-  }, [isOpen, hasIntroduced, messages.length]);
+  }, [isOpen, hasIntroduced, messages.length, trackedFlights, localSnipers, subscriptions]);
+
+  // UI Retraction: Close chat when clicking outside or switching tabs
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isOpen && chatPanelRef.current) {
+        const target = event.target as HTMLElement;
+        // Check if click is outside the chat panel and not on the floating button
+        if (!chatPanelRef.current.contains(target)) {
+          const floatingButton = target.closest('button[class*="fixed bottom-6 right-6"]');
+          if (!floatingButton) {
+            setIsOpen(false);
+          }
+        }
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isOpen]);
+
+  // Close chat when route changes
+  useEffect(() => {
+    if (isOpen) {
+      setIsOpen(false);
+    }
+  }, [location]);
 
   // Temporarily set Rolex target price to ₹500 higher than current price to trigger green glow
   useEffect(() => {
@@ -304,12 +346,13 @@ export function MissionControl() {
     });
   };
 
-  const addAIMessage = (text: string, topic?: string) => {
+  const addAIMessage = (text: string, topic?: string, options?: { flightOptions?: { flightId: string; flight: any } }) => {
     const newMessage: Message = {
       id: Date.now().toString(),
       text,
       sender: "ai",
       timestamp: new Date(),
+      flightOptions: options?.flightOptions,
     };
     setMessages((prev) => [...prev, newMessage]);
     
@@ -644,43 +687,102 @@ export function MissionControl() {
     // Simulate AI thinking
     setTimeout(() => {
       // PRIORITY 0: MULTI-INTENT HANDLING - Handle complex queries with multiple intents
+      // Strict Intent Routing: Only mention flights when asked about flights, only snipers when asked about snipers
       const hasIdentityQuery = /who are you|what are you|identify yourself/i.test(command);
-      const hasFlightStatusQuery = /flight status|flight.*status|my flight|tracked flight|dubai flight|bom.*dxb|dxb.*bom/i.test(command);
-      const hasSniperStatusQuery = /sniper status|mission status|target status/i.test(command);
+      // Strict Category Filtering: Flight keywords MUST route to flights array only
+      const hasFlightStatusQuery = /flight|flights|logistics|mission|missions|bom|dxb|del|blr|sin|lhr|mumbai|dubai|delhi|london|bangalore|singapore|intercept|abort.*flight/i.test(command);
+      // Sniper keywords (exclude 'mission' which is now flight-only)
+      const hasSniperStatusQuery = /sniper|snipers|target|targets|product|products|shopping|rolex|nike|jordan|macbook|gaming.*chair|chair/i.test(command);
       
-      // INTERCEPT command: Buy/Book flight
+      // INTERCEPT command: Buy/Book flight - Check for pending confirmation first
       const hasInterceptCommand = /intercept|buy.*flight|book.*flight|purchase.*flight|book the flight|buy the flight/i.test(command);
-      if (hasInterceptCommand) {
-        // Use real-time flight data from global state (trackedFlights array)
-        if (trackedFlights && trackedFlights.length > 0) {
-          const flight = trackedFlights[0]; // Get first tracked flight
+      if (hasInterceptCommand || pendingQuestion === "intercept") {
+        // Check if there's a pending intercept confirmation
+        if (pendingQuestion === "intercept" && pendingInterceptFlight) {
+          const confirmationKeywords = ["yes", "do it", "confirm", "proceed", "execute", "go ahead"];
+          const rejectionKeywords = ["no", "cancel", "abort", "stop", "hold", "wait"];
+          
+          if (confirmationKeywords.some(keyword => lowerCommand.includes(keyword))) {
+            // User confirmed - execute intercept
+            const flight = trackedFlights?.find(f => f.id === pendingInterceptFlight);
+            if (flight) {
+              const currentPrice = Number(flight.currentPrice || flight.originalPrice);
+              const originalPrice = Number(flight.originalPrice || currentPrice);
+              const savings = originalPrice - currentPrice;
+              
+              // Execute INTERCEPT - open booking URL with affiliate tag
+              const bookingUrl = `https://example.com/flights/${flight.originCode}-${flight.destinationCode}?price=${currentPrice}`;
+              const separator = bookingUrl.includes('?') ? '&' : '?';
+              const affiliateUrl = `${bookingUrl}${separator}tag=commander-21`;
+              window.open(affiliateUrl, '_blank', 'noopener,noreferrer');
+              
+              // Add green pulse effect message with visual indicator
+              addAIMessage(`🟢 **INTERCEPT EXECUTED** 🟢\n\nCommander, opening booking for ${flight.origin} (${flight.originCode}) → ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)}. You're saving ${formatCurrency(savings)} on this flight.`, "general");
+              
+              // Trigger green pulse effect similar to Kill button
+              const chatPanel = document.querySelector('[class*="bg-zinc-900/95"]') as HTMLElement;
+              if (chatPanel) {
+                // Add green pulse animation
+                chatPanel.style.animation = 'pulse 2s infinite';
+                chatPanel.style.boxShadow = '0 0 20px rgba(34, 197, 94, 0.8), 0 0 40px rgba(34, 197, 94, 0.4)';
+                chatPanel.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+                setTimeout(() => {
+                  chatPanel.style.animation = '';
+                  chatPanel.style.boxShadow = '';
+                  chatPanel.style.borderColor = '';
+                }, 2000);
+              }
+              
+              // Clear pending state
+              setPendingQuestion(null);
+              setPendingInterceptFlight(null);
+            }
+            return;
+          } else if (rejectionKeywords.some(keyword => lowerCommand.includes(keyword))) {
+            // User rejected
+            addAIMessage("Understood, Commander. Intercept cancelled.", "general");
+            setPendingQuestion(null);
+            setPendingInterceptFlight(null);
+            return;
+          }
+        }
+        
+        // New intercept request - require confirmation
+        // Deep Intel: Search entire flights array for city matches
+        if (trackedFlights && trackedFlights.length > 0 && !pendingQuestion) {
+          // Try to find a specific flight based on city mentions
+          const cityPatterns = [
+            { name: "mumbai", codes: ["BOM"], keywords: ["mumbai", "bom", "dubai", "dxb"] },
+            { name: "delhi", codes: ["DEL"], keywords: ["delhi", "del", "london", "lhr"] },
+            { name: "bangalore", codes: ["BLR"], keywords: ["bangalore", "blr", "singapore", "sin"] },
+          ];
+          
+          let matchedFlight = null;
+          for (const city of cityPatterns) {
+            const cityMentioned = city.keywords.some(keyword => 
+              new RegExp(`\\b${keyword}\\b`, 'i').test(command)
+            );
+            if (cityMentioned) {
+              matchedFlight = trackedFlights.find((f: any) => 
+                city.codes.some(code => 
+                  f.originCode === code || f.destinationCode === code
+                )
+              );
+              if (matchedFlight) break;
+            }
+          }
+          
+          // Default to first flight if no specific match
+          const flight = matchedFlight || trackedFlights[0];
           const currentPrice = Number(flight.currentPrice || flight.originalPrice);
           const originalPrice = Number(flight.originalPrice || currentPrice);
           const savings = originalPrice - currentPrice;
           
-          // Execute INTERCEPT - open booking URL with affiliate tag
-          const bookingUrl = `https://example.com/flights/${flight.originCode}-${flight.destinationCode}?price=${currentPrice}`;
-          const separator = bookingUrl.includes('?') ? '&' : '?';
-          const affiliateUrl = `${bookingUrl}${separator}tag=commander-21`;
-          window.open(affiliateUrl, '_blank', 'noopener,noreferrer');
-          
-          // Add green pulse effect message with visual indicator
-          addAIMessage(`🟢 **INTERCEPT EXECUTED** 🟢\n\nCommander, opening booking for ${flight.origin} (${flight.originCode}) → ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)}. You're saving ${formatCurrency(savings)} on this flight.`, "general");
-          
-          // Trigger green pulse effect similar to Kill button
-          const chatPanel = document.querySelector('[class*="bg-zinc-900/95"]') as HTMLElement;
-          if (chatPanel) {
-            // Add green pulse animation
-            chatPanel.style.animation = 'pulse 2s infinite';
-            chatPanel.style.boxShadow = '0 0 20px rgba(34, 197, 94, 0.8), 0 0 40px rgba(34, 197, 94, 0.4)';
-            chatPanel.style.borderColor = 'rgba(34, 197, 94, 0.5)';
-            setTimeout(() => {
-              chatPanel.style.animation = '';
-              chatPanel.style.boxShadow = '';
-              chatPanel.style.borderColor = '';
-            }, 2000);
-          }
-        } else {
+          // Ask for confirmation
+          addAIMessage(`Commander, I found ${flight.origin} (${flight.originCode}) → ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)}. You'll save ${formatCurrency(savings)}. Should I proceed with the intercept?`, "general");
+          setPendingQuestion("intercept");
+          setPendingInterceptFlight(flight.id);
+        } else if (!trackedFlights || trackedFlights.length === 0) {
           addAIMessage("Commander, no tracked flight found to intercept. Please track a flight first.", "general");
         }
         return;
@@ -688,36 +790,326 @@ export function MissionControl() {
       
       if (hasIdentityQuery && (hasFlightStatusQuery || hasSniperStatusQuery)) {
         // Multi-intent: Identity + Status - Use exact format requested
+        // If just identity query, use the standard format
+        if (!hasFlightStatusQuery && !hasSniperStatusQuery) {
+      // Identity: Star's greeting must show exact counts (3 flights, 6 snipers, 2 active, 1 ghost)
+      const flightCount = trackedFlights ? trackedFlights.length : 0;
+      const sniperCount = localSnipers.length;
+      // Subscription Purge: Filter out terminated subscriptions from counts
+      const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active" && s.isGhost !== true && s.status !== "terminated");
+      const ghostSubscriptions = subscriptions.filter((s: any) => s.isGhost === true && s.status !== "terminated");
+          
+          const tacticalSummary = `I am Star, your tactical operative. Monitoring ${flightCount} flight${flightCount !== 1 ? 's' : ''}, ${sniperCount} sniper${sniperCount !== 1 ? 's' : ''}, ${activeSubscriptions.length} active subscription${activeSubscriptions.length !== 1 ? 's' : ''}, and ${ghostSubscriptions.length} ghost subscription${ghostSubscriptions.length !== 1 ? 's' : ''}.`;
+          addAIMessage(tacticalSummary, "general");
+          return;
+        }
+        
         let response = "I am Star, your tactical operative. ";
         
         if (hasFlightStatusQuery) {
-          // Use real-time flight data from global state (trackedFlights array)
-          if (trackedFlights && trackedFlights.length > 0) {
-            const flight = trackedFlights[0]; // Get first tracked flight
-            const currentPrice = Number(flight.currentPrice || flight.originalPrice);
-            const originalPrice = Number(flight.originalPrice || currentPrice);
+          // Deep Intel: Array Search Logic - Search entire flights array for city matches
+          // Extract city names from command
+          const cityPatterns = [
+            { name: "mumbai", codes: ["BOM", "Mumbai"], flight: null },
+            { name: "dubai", codes: ["DXB", "Dubai"], flight: null },
+            { name: "delhi", codes: ["DEL", "Delhi"], flight: null },
+            { name: "london", codes: ["LHR", "London"], flight: null },
+            { name: "bangalore", codes: ["BLR", "Bangalore"], flight: null },
+            { name: "singapore", codes: ["SIN", "Singapore"], flight: null },
+          ];
+          
+          // Find matching flight based on city mentions in command
+          let matchedFlight = null;
+          
+          // Check for specific city mentions
+          for (const city of cityPatterns) {
+            const cityMentioned = city.codes.some(code => 
+              new RegExp(`\\b${code}\\b|\\b${city.name}\\b`, 'i').test(command)
+            );
+            
+            if (cityMentioned && trackedFlights) {
+              // Search entire flights array for matching city
+              matchedFlight = trackedFlights.find((f: any) => 
+                city.codes.some(code => 
+                  f.originCode === code || 
+                  f.destinationCode === code ||
+                  f.origin?.toLowerCase().includes(city.name) ||
+                  f.destination?.toLowerCase().includes(city.name)
+                )
+              );
+              
+              if (matchedFlight) break;
+            }
+          }
+          
+          // If no specific city match, check for BOM->DXB (Mumbai->Dubai) as default
+          if (!matchedFlight && trackedFlights) {
+            matchedFlight = trackedFlights.find((f: any) => 
+              (f.originCode === "BOM" && f.destinationCode === "DXB") ||
+              (f.origin?.toLowerCase().includes("mumbai") && f.destination?.toLowerCase().includes("dubai"))
+            );
+          }
+          
+          if (matchedFlight) {
+            const currentPrice = Number(matchedFlight.currentPrice || matchedFlight.originalPrice);
+            const originalPrice = Number(matchedFlight.originalPrice || currentPrice);
             const savings = originalPrice - currentPrice;
             const savingsPercentage = originalPrice > 0 ? Math.round((savings / originalPrice) * 100) : 0;
             
-            response += `Currently tracking ${trackedFlights.length} flight${trackedFlights.length > 1 ? 's' : ''}: ${flight.origin} (${flight.originCode}) to ${flight.destination} (${flight.destinationCode}) at ${formatCurrency(currentPrice)} with a ${savingsPercentage}% price drop.`;
+            response += `I am currently tracking your ${matchedFlight.originCode} -> ${matchedFlight.destinationCode} flight at ${formatCurrency(currentPrice)} (${savingsPercentage}% savings).`;
+          } else if (trackedFlights && trackedFlights.length > 0) {
+            // Fallback: Report all flights if no specific match
+            const flightList = trackedFlights.map((f: any) => {
+              const currentPrice = Number(f.currentPrice || f.originalPrice);
+              return `${f.originCode} -> ${f.destinationCode} at ${formatCurrency(currentPrice)}`;
+            }).join(", ");
+            response += `I am tracking ${trackedFlights.length} flight${trackedFlights.length > 1 ? 's' : ''}: ${flightList}.`;
           } else {
             response += "No tracked flights found.";
           }
         }
         
-        if (hasSniperStatusQuery && localSnipers.length > 0) {
-          // Use real-time sniper data
-          if (!hasFlightStatusQuery) {
-            response += `You have ${localSnipers.length} active sniper${localSnipers.length > 1 ? 's' : ''} tracking.`;
-          }
+        // Only mention snipers if explicitly asked about snipers (not flights)
+        if (hasSniperStatusQuery && !hasFlightStatusQuery && localSnipers.length > 0) {
+          response += ` You have ${localSnipers.length} active sniper${localSnipers.length > 1 ? 's' : ''} tracking.`;
         }
         
         addAIMessage(response.trim(), "general");
         return;
       }
       
+      // PRIORITY: Subscription Queries - Handle active and ghost subscription queries
+      // Intelligence Link: Filter by status: 'active' for active queries, isGhost: true for ghost queries
+      const hasActiveSubscriptionQuery = /show.*active|list.*active|my.*active|active.*subscription/i.test(command);
+      const hasGhostQuery = /ghost|ghosts|do i have.*ghost|any ghost|subscription.*ghost/i.test(command);
+      
+      if (hasActiveSubscriptionQuery) {
+        // Filter for status: 'active' subscriptions
+        const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active");
+        if (activeSubscriptions.length > 0) {
+          const subscriptionList = activeSubscriptions.map((s: any) => 
+            `**${s.name}** (${formatCurrency(s.price)})`
+          ).join(", ");
+          addAIMessage(`Commander, you have ${activeSubscriptions.length} active subscription${activeSubscriptions.length > 1 ? 's' : ''}: ${subscriptionList}.`, "general");
+        } else {
+          addAIMessage("Commander, no active subscriptions found.", "general");
+        }
+        return;
+      }
+      
+      if (hasGhostQuery) {
+        // Filter for isGhost: true subscriptions (regardless of status)
+        const ghostSubscriptions = subscriptions.filter((s: any) => s.isGhost === true);
+        if (ghostSubscriptions.length > 0) {
+          // Identify Gym Membership (₹3,701) as the primary ghost target
+          const gymMembership = ghostSubscriptions.find((s: any) => 
+            s.name.toLowerCase().includes("gym") || s.name.toLowerCase().includes("membership")
+          ) || ghostSubscriptions[0];
+          
+          addAIMessage(`Commander, I've identified ${ghostSubscriptions.length} Ghost subscription${ghostSubscriptions.length > 1 ? 's' : ''}. The primary target is **${gymMembership.name}** at ${formatCurrency(gymMembership.price)}. No activity detected in 30 days.`, "general");
+        } else {
+          addAIMessage("Commander, no Ghost subscriptions detected. All subscriptions are active.", "general");
+        }
+        // Anti-Double Prompt: Return immediately, no follow-up questions
+        return;
+      }
+      
+      // Execution Command: Handle 'Terminate' command for ghost subscriptions ONLY
+      // Kill Override: Ensure 'Terminate' only applies to Gym Membership ghost subscription, NOT snipers
+      const hasTerminateCommand = /terminate.*ghost|terminate.*subscription|terminate.*gym|kill.*ghost.*subscription|kill.*gym/i.test(command);
+      const isTerminateConfirmation = pendingQuestion === "terminateGhost" && (
+        /yes|confirm|execute|do it|proceed|go ahead/i.test(lowerCommand)
+      );
+      
+      // Only process terminate if it's explicitly about ghost/subscription, not snipers
+      if ((hasTerminateCommand || isTerminateConfirmation) && !/sniper|product|gaming.*chair|chair|rolex|nike|jordan/i.test(command)) {
+        // Intelligence Link: Filter ghost subscriptions by isGhost: true
+        const ghostSubscriptions = subscriptions.filter((s: any) => 
+          s.isGhost === true && s.status !== "terminated"
+        );
+        
+        if (isTerminateConfirmation && pendingQuestion === "terminateGhost") {
+          // User confirmed termination
+          const gymMembership = ghostSubscriptions.find((s: any) => 
+            s.name.toLowerCase().includes("gym") || s.name.toLowerCase().includes("membership")
+          ) || ghostSubscriptions[0];
+          
+          if (gymMembership) {
+            terminateSubscription(gymMembership.id);
+            addAIMessage(`Commander, **${gymMembership.name}** has been terminated. ₹${gymMembership.price.toLocaleString('en-IN')} has been added to Total Savings.`, "general");
+            setPendingQuestion(null);
+          }
+          return;
+        }
+        
+        if (ghostSubscriptions.length > 0) {
+          const gymMembership = ghostSubscriptions.find((s: any) => 
+            s.name.toLowerCase().includes("gym") || s.name.toLowerCase().includes("membership")
+          ) || ghostSubscriptions[0];
+          
+          if (gymMembership) {
+            addAIMessage(`Commander, I've identified **${gymMembership.name}** (₹${gymMembership.price.toLocaleString('en-IN')}) as a Ghost subscription. Should I terminate it? This will add ₹${gymMembership.price.toLocaleString('en-IN')} to your Total Savings.`, "general");
+            setPendingQuestion("terminateGhost");
+          }
+        } else {
+          addAIMessage("Commander, no active Ghost subscriptions found to terminate.", "general");
+        }
+        return;
+      }
+      
+      // Undo/Restore Subscription: Handle undo commands for terminated subscriptions
+      const hasUndoCommand = /undo|restore|bring back/i.test(command);
+      const hasGymRestore = /restore.*gym|undo.*gym|bring back.*gym|gym.*restore|gym.*undo/i.test(command);
+      if (hasUndoCommand || hasGymRestore) {
+        // First, check if Gym is terminated (exists in localSavings as terminated-{id})
+        const terminatedGym = localSavings.find((s: any) => 
+          s.id.startsWith("terminated-") && 
+          (s.title.toLowerCase().includes("gym") || s.title.toLowerCase().includes("membership"))
+        );
+        
+        if (terminatedGym) {
+          // Extract ID from terminated-{id} format
+          const gymId = terminatedGym.id.replace("terminated-", "");
+          restoreSubscription(gymId);
+          addAIMessage(`Commander, **${terminatedGym.title}** has been restored to Active status. ₹${Number(terminatedGym.oldPrice).toLocaleString('en-IN')} has been subtracted from Total Savings.`, "general");
+        } else {
+          // Check if Gym exists in subscriptions (might already be active)
+          const activeGym = subscriptions.find((s: any) => 
+            (s.name.toLowerCase().includes("gym") || s.name.toLowerCase().includes("membership")) && s.status === "active"
+          );
+          if (activeGym) {
+            addAIMessage(`Commander, **${activeGym.name}** is already Active. No action needed.`, "general");
+          } else {
+            addAIMessage("Commander, I couldn't find a terminated Gym Membership to restore. Please check your subscriptions.", "general");
+          }
+        }
+        return;
+      }
+      
+      // Strict Intent Routing: If asked about flights, ONLY report flights (ignore snipers)
+      // Deep Intel: Array Search Logic - Search entire flights array for city matches
+      if (hasFlightStatusQuery && !hasIdentityQuery) {
+        // Extract city names from command for intelligent matching
+        const cityPatterns = [
+          { name: "mumbai", codes: ["BOM", "Mumbai"], keywords: ["mumbai", "bom"] },
+          { name: "dubai", codes: ["DXB", "Dubai"], keywords: ["dubai", "dxb"] },
+          { name: "delhi", codes: ["DEL", "Delhi"], keywords: ["delhi", "del"] },
+          { name: "london", codes: ["LHR", "London"], keywords: ["london", "lhr"] },
+          { name: "bangalore", codes: ["BLR", "Bangalore"], keywords: ["bangalore", "blr", "bengaluru"] },
+          { name: "singapore", codes: ["SIN", "Singapore"], keywords: ["singapore", "sin"] },
+        ];
+        
+        // Find matching flight based on city mentions in command
+        let matchedFlight = null;
+        
+        // Check for specific city mentions in the command
+        for (const city of cityPatterns) {
+          const cityMentioned = city.keywords.some(keyword => 
+            new RegExp(`\\b${keyword}\\b`, 'i').test(command)
+          );
+          
+          if (cityMentioned && trackedFlights) {
+            // Search entire flights array for matching city (origin or destination)
+            matchedFlight = trackedFlights.find((f: any) => 
+              city.codes.some(code => 
+                f.originCode === code || 
+                f.destinationCode === code ||
+                f.origin?.toLowerCase().includes(city.name) ||
+                f.destination?.toLowerCase().includes(city.name)
+              )
+            );
+            
+            if (matchedFlight) break;
+          }
+        }
+        
+        // If no specific city match, check for BOM->DXB (Mumbai->Dubai) as default
+        if (!matchedFlight && trackedFlights) {
+          matchedFlight = trackedFlights.find((f: any) => 
+            (f.originCode === "BOM" && f.destinationCode === "DXB") ||
+            (f.origin?.toLowerCase().includes("mumbai") && f.destination?.toLowerCase().includes("dubai"))
+          );
+        }
+        
+        if (matchedFlight) {
+          const currentPrice = Number(matchedFlight.currentPrice || matchedFlight.originalPrice);
+          const originalPrice = Number(matchedFlight.originalPrice || currentPrice);
+          const savings = originalPrice - currentPrice;
+          const savingsPercentage = originalPrice > 0 ? Math.round((savings / originalPrice) * 100) : 0;
+          
+          addAIMessage(`Commander, your ${matchedFlight.originCode} -> ${matchedFlight.destinationCode} flight is currently at ${formatCurrency(currentPrice)} (${savingsPercentage}% savings from original ${formatCurrency(originalPrice)}).`, "general");
+        } else if (trackedFlights && trackedFlights.length > 0) {
+          // Report all flights if no specific match
+          const flightList = trackedFlights.map((f: any) => {
+            const currentPrice = Number(f.currentPrice || f.originalPrice);
+            const originalPrice = Number(f.originalPrice || currentPrice);
+            const savingsPercentage = originalPrice > 0 ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100) : 0;
+            return `${f.originCode} -> ${f.destinationCode} at ${formatCurrency(currentPrice)} (${savingsPercentage}% savings)`;
+          }).join(", ");
+          addAIMessage(`Commander, I'm tracking ${trackedFlights.length} flight${trackedFlights.length > 1 ? 's' : ''}: ${flightList}.`, "general");
+        } else {
+          addAIMessage("Commander, no tracked flights found.", "general");
+        }
+        return;
+      }
+      
+      // Strict Category Filtering: If flight keywords detected, skip product matching entirely
+      // This prevents flight queries from falling through to sniper/product handlers
+      if (hasFlightStatusQuery) {
+        // Deep Search Implementation: Case-insensitive search for specific flights
+        const cityPatterns = [
+          { name: "london", codes: ["LHR"], keywords: ["london", "lhr"], route: "DEL -> LHR" },
+          { name: "singapore", codes: ["SIN"], keywords: ["singapore", "sin"], route: "BLR -> SIN" },
+          { name: "dubai", codes: ["DXB"], keywords: ["dubai", "dxb"], route: "BOM -> DXB" },
+          { name: "mumbai", codes: ["BOM"], keywords: ["mumbai", "bom"], route: "BOM -> DXB" },
+          { name: "delhi", codes: ["DEL"], keywords: ["delhi", "del"], route: "DEL -> LHR" },
+          { name: "bangalore", codes: ["BLR"], keywords: ["bangalore", "blr", "bengaluru"], route: "BLR -> SIN" },
+        ];
+        
+        let matchedFlight = null;
+        for (const city of cityPatterns) {
+          const cityMentioned = city.keywords.some(keyword => 
+            new RegExp(`\\b${keyword}\\b`, 'i').test(command)
+          );
+          
+          if (cityMentioned && trackedFlights) {
+            matchedFlight = trackedFlights.find((f: any) => 
+              city.codes.some(code => 
+                f.originCode === code || 
+                f.destinationCode === code ||
+                f.origin?.toLowerCase().includes(city.name) ||
+                f.destination?.toLowerCase().includes(city.name)
+              )
+            );
+            
+            if (matchedFlight) break;
+          }
+        }
+        
+        // Default to first flight if no specific match but flight keywords present
+        if (!matchedFlight && trackedFlights && trackedFlights.length > 0) {
+          matchedFlight = trackedFlights[0];
+        }
+        
+        if (matchedFlight) {
+          const currentPrice = Number(matchedFlight.currentPrice || matchedFlight.originalPrice);
+          const originalPrice = Number(matchedFlight.originalPrice || currentPrice);
+          const savings = originalPrice - currentPrice;
+          const savingsPercentage = originalPrice > 0 ? Math.round((savings / originalPrice) * 100) : 0;
+          
+          // Flight Search & Intercept: When asked about any flight, MUST respond with price and follow-up question
+          // Dialogue Lockdown: Priority - ALWAYS append intercept phrase when flight is found
+          const statusMessage = `Commander, your ${matchedFlight.originCode} -> ${matchedFlight.destinationCode} flight is currently at ${formatCurrency(currentPrice)} (${savingsPercentage}% savings from original ${formatCurrency(originalPrice)}). Commander, shall we INTERCEPT or HOLD?`;
+          addAIMessage(statusMessage, "general", { flightOptions: { flightId: matchedFlight.id, flight: matchedFlight } });
+        } else {
+          addAIMessage("Commander, no tracked flights found matching your query.", "general");
+        }
+        return; // Exit immediately - do NOT fall through to product matching
+      }
+      
       // PRIORITY 1: FUZZY PRODUCT MATCHING - Extract product name from command first
       // This prioritizes product names even if other words are confusing
+      // Only runs if flight keywords were NOT detected
       const matchedProductResult = extractProductFromCommand(command);
       
       // PRIORITY 2: INTENT MAPPING - Check for price-related intents (with typo tolerance)
@@ -949,46 +1341,15 @@ export function MissionControl() {
       }
       
       if (isHowAreYou || (isGreeting && lowerCommand.length < 20)) {
-        // Dynamic Greetings: Create an array of greetings and use Math.random() to pick one
-        // Maintain Data Truth: Include real data from dashboard when available
-        const originalPrices = JSON.parse(localStorage.getItem("sniper-original-prices") || "{}");
-        const rolexMission = localSnipers.find(s => s.targetName.toLowerCase().includes("rolex"));
-        const hasRolexSavings = rolexMission ? (() => {
-          const original = Number(originalPrices[rolexMission.id] ?? (rolexMission.currentPrice ? Number(rolexMission.currentPrice) : Number(rolexMission.targetPrice)));
-          const current = rolexMission.currentPrice ? Number(rolexMission.currentPrice) : original;
-          return current < original;
-        })() : false;
+        // Identity Update: Exact format - 'I am Star, your tactical operative. Monitoring 3 flights, 6 snipers, 2 active subscriptions, and 1 ghost subscription.'
+        // Identity Check: Ensure counts exclude terminated subscriptions
+        const flightCount = trackedFlights ? trackedFlights.length : 0;
+        const sniperCount = localSnipers.length;
+        const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active" && s.isGhost !== true && s.status !== "terminated");
+        const ghostSubscriptions = subscriptions.filter((s: any) => s.isGhost === true && s.status !== "terminated");
         
-        // Get flights data from global state (trackedFlights array)
-        const dubaiFlight = trackedFlights && trackedFlights.length > 0 
-          ? trackedFlights.find((f: any) => 
-              f.destinationCode === "DXB" || f.destination?.toLowerCase().includes("dubai")
-            ) || trackedFlights[0]
-          : null;
-        
-        // Calculate flight price change if available
-        let flightUpdate = "";
-        if (dubaiFlight && dubaiFlight.originalPrice && dubaiFlight.currentPrice) {
-          const priceChange = dubaiFlight.currentPrice - dubaiFlight.originalPrice;
-          if (Math.abs(priceChange) > 0) {
-            const changeText = priceChange > 0 ? `shifted up ₹${Math.abs(priceChange).toLocaleString('en-IN')}` : `shifted down ₹${Math.abs(priceChange).toLocaleString('en-IN')}`;
-            flightUpdate = ` By the way, the Dubai flight just ${changeText}.`;
-          }
-        }
-        
-        const dynamicGreetings = [
-          `I'm functioning at 100%, Commander.${flightUpdate || " Ready for your next objective."}`,
-          hasRolexSavings 
-            ? `Systems are green and I am feeling excellent. Hope your day is as successful as our Rolex mission!${flightUpdate}`
-            : `Systems are green and I am feeling excellent. Hope your day is as successful as our missions!${flightUpdate}`,
-          `Reporting for duty! I am doing great and ready to secure some savings.${flightUpdate} What is on your mind?`,
-          `Excellent as always! Your portfolio is looking sharp today.${flightUpdate} How can I assist?`
-        ];
-        
-        // Dynamic Personality (The Randomizer): Use Math.floor(Math.random() * greetings.length) to pick unique response
-        const randomIndex = Math.floor(Math.random() * dynamicGreetings.length);
-        const randomGreeting = dynamicGreetings[randomIndex];
-        addAIMessage(randomGreeting, "general");
+        const tacticalSummary = `I am Star, your tactical operative. Monitoring ${flightCount} flight${flightCount !== 1 ? 's' : ''}, ${sniperCount} sniper${sniperCount !== 1 ? 's' : ''}, ${activeSubscriptions.length} active subscription${activeSubscriptions.length !== 1 ? 's' : ''}, and ${ghostSubscriptions.length} ghost subscription${ghostSubscriptions.length !== 1 ? 's' : ''}.`;
+        addAIMessage(tacticalSummary, "general");
         return;
       }
       
@@ -997,14 +1358,11 @@ export function MissionControl() {
         const activeMissionCount = localSnipers.length;
         // Get real-time flight count from global state
         const flightCount = trackedFlights ? trackedFlights.length : 0;
+        const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active" && s.isGhost !== true);
+        const ghostSubscriptions = subscriptions.filter((s: any) => s.isGhost === true && s.status !== "terminated");
         
         let response = `I'm Star, your tactical AI assistant. I can analyze price differences, execute purchase orders, track flights, and give you status reports. `;
-        if (activeMissionCount > 0) {
-          response += `You have ${activeMissionCount} active sniper${activeMissionCount > 1 ? 's' : ''}. `;
-        }
-        if (flightCount > 0) {
-          response += `${flightCount} tracked flight${flightCount > 1 ? 's' : ''}. `;
-        }
+        response += `I am monitoring ${flightCount} flight${flightCount !== 1 ? 's' : ''}, ${activeMissionCount} sniper${activeMissionCount > 1 ? 's' : ''}, ${activeSubscriptions.length} active subscription${activeSubscriptions.length !== 1 ? 's' : ''}, and ${ghostSubscriptions.length} ghost subscription${ghostSubscriptions.length !== 1 ? 's' : ''}. `;
         response += `How can I assist you, Commander?`;
         addAIMessage(response, "general");
         return;
@@ -1034,7 +1392,7 @@ export function MissionControl() {
             return;
           } else if (rejectionKeywords.some(keyword => lowerCommand.includes(keyword))) {
             setLastSuggestedAction(null);
-            handleProactiveFollowUp("hold");
+            // Confirmation Safety: Do NOT ask unrequested follow-up questions
             return;
           }
         } else if (currentDiscountedItem !== null) {
@@ -1043,10 +1401,11 @@ export function MissionControl() {
           const waitKeywords = ["no", "wait", "hold", "not yet", "later"];
           
           if (executeKeywords.some(keyword => lowerCommand.includes(keyword))) {
-            // Execute kill for discounted item
+            // Execute kill for discounted item - Single action confirmation
             handleKillById(currentDiscountedItem, true);
             setCurrentDiscountedItem(null);
             setPendingQuestion(null);
+            setLastSuggestedAction(null); // Clear to prevent double execution
             return;
           } else if (waitKeywords.some(keyword => lowerCommand.includes(keyword))) {
             // User wants to wait - check if there's a price drop
@@ -1076,11 +1435,7 @@ export function MissionControl() {
             setCurrentDiscountedItem(null);
             setLastSuggestedAction(null);
             setPendingQuestion(null);
-            
-            // Proactive follow-up
-            setTimeout(() => {
-              addAIMessage("Are there any other missions you'd like to review, Commander?");
-            }, 500);
+            // Confirmation Safety: Do NOT ask unrequested follow-up questions
             return;
           }
         } else if (pendingQuestion === "checkOther") {
@@ -1095,18 +1450,19 @@ export function MissionControl() {
             addAIMessage("Understood, Commander.");
             return;
           }
-        } else {
-          // Normal kill confirmation flow
+        } else if (pendingQuestion === "kill") {
+          // Normal kill confirmation flow - Single action confirmation
           if (confirmationKeywords.some(keyword => lowerCommand.includes(keyword))) {
-            // User confirmed - proceed with kill
+            // User confirmed - proceed with kill for THIS specific item only
             handleKillById(lastSuggestedAction, true);
             setPendingQuestion(null);
+            setLastSuggestedAction(null); // Clear after execution to prevent double execution
             return;
           } else if (rejectionKeywords.some(keyword => lowerCommand.includes(keyword))) {
             // User rejected - clear memory and provide proactive follow-up
             setLastSuggestedAction(null);
             setPendingQuestion(null);
-            handleProactiveFollowUp("hold");
+            // Confirmation Safety: Do NOT ask unrequested follow-up questions
             return;
           } else if (killKeywords.some(keyword => lowerCommand.includes(keyword))) {
             // User said "kill" - double check before proceeding
@@ -1190,11 +1546,7 @@ export function MissionControl() {
           addSniper(newSniper, currentPrice, "ELECTRONICS");
           addAIMessage(`Excellent, Commander! **${name}** sniper mission deployed. Target: ${formatCurrency(targetPrice)}. I'll monitor the price and alert you when it drops.`);
           setPendingAction(null);
-          
-          // Proactive follow-up
-          setTimeout(() => {
-            handleProactiveFollowUp("kill");
-          }, 1000);
+          // Confirmation Safety: Do NOT ask unrequested follow-up questions
           return;
         } else {
           addAIMessage("Commander, I couldn't parse that target price. Please provide a valid amount (e.g., '₹1,25,000' or '125000').");
@@ -1800,14 +2152,15 @@ export function MissionControl() {
     const message = `Mission accomplished, Commander! **${sniper.targetName}** killed. ${formatCurrency(savedAmount)} added to your savings.`;
     addAIMessage(message);
     
+    // Clear pending state to prevent double execution
+    setLastSuggestedAction(null);
+    setPendingQuestion(null);
+    
     // Clear memory after successful kill
     setLastSuggestedAction(null);
     setCurrentDiscountedItem(null);
     
-    // Provide proactive follow-up after kill
-    setTimeout(() => {
-      handleProactiveFollowUp("kill");
-    }, 1000);
+      // Confirmation Safety: Do NOT ask unrequested follow-up questions
   };
 
   // Handle Kill command with product name
@@ -2194,20 +2547,7 @@ export function MissionControl() {
       setPendingQuestion(null);
       
       // Proactive Follow-up: Suggest checking another target
-      setTimeout(() => {
-        const otherSnipers = localSnipers.filter(s => s.id !== mission.id);
-        if (otherSnipers.length > 0) {
-          const targetToSuggest = otherSnipers[0];
-          const targetNameLower = targetToSuggest.targetName.toLowerCase();
-          if (targetNameLower.includes("rolex")) {
-            addAIMessage(`Shall I analyze the **Rolex** for you next, Commander?`, "suggestion");
-          } else if (targetNameLower.includes("jordan") || targetNameLower.includes("nike")) {
-            addAIMessage(`Shall I analyze the **Nike Jordans** for you next, Commander?`, "suggestion");
-          } else {
-            addAIMessage(`Shall I analyze the **${targetToSuggest.targetName}** for you next, Commander?`, "suggestion");
-          }
-        }
-      }, 1500);
+      // Confirmation Safety: Do NOT ask unrequested follow-up questions
     } else if (isPriceDrop) {
       // Math Verification: Ensure the AI verifies the math before it speaks
       // The Data Bridge: missionSavings comes directly from missions array calculation
@@ -2254,22 +2594,7 @@ export function MissionControl() {
             const targetNameLower = targetToSuggest.targetName.toLowerCase();
             const productNameLower = mission.targetName.toLowerCase();
             
-            // Proactive Follow-up: Context-aware suggestion
-            if (productNameLower.includes("rolex")) {
-              if (targetNameLower.includes("jordan") || targetNameLower.includes("nike")) {
-                addAIMessage(`**${mission.targetName}** is ready for the kill, Commander. Shall I analyze the **Nike Jordans** for you next?`, "suggestion");
-              } else {
-                addAIMessage(`**${mission.targetName}** is ready for the kill, Commander. Shall I analyze the **${targetToSuggest.targetName}** for you next?`, "suggestion");
-              }
-            } else if (productNameLower.includes("jordan") || productNameLower.includes("nike")) {
-              if (targetNameLower.includes("rolex")) {
-                addAIMessage(`**${mission.targetName}** is ready for the kill, Commander. Shall I analyze the **Rolex** for you next?`, "suggestion");
-              } else {
-                addAIMessage(`**${mission.targetName}** is ready for the kill, Commander. Shall I analyze the **${targetToSuggest.targetName}** for you next?`, "suggestion");
-              }
-            } else {
-              addAIMessage(`**${mission.targetName}** is ready for the kill, Commander. Shall I analyze the **${targetToSuggest.targetName}** for you next?`, "suggestion");
-            }
+            // Confirmation Safety: Do NOT ask unrequested follow-up questions
           }
         }
       }, 1500);
@@ -2300,22 +2625,7 @@ export function MissionControl() {
           const targetNameLower = targetToSuggest.targetName.toLowerCase();
           const productNameLower = mission.targetName.toLowerCase();
           
-          // Proactive Follow-up: Context-aware suggestion
-          if (productNameLower.includes("jordan") || productNameLower.includes("nike")) {
-            if (targetNameLower.includes("rolex")) {
-              addAIMessage(`I recommend we maintain sniper position on the **${mission.targetName}**, Commander. Shall I analyze the **Rolex** for you next?`, "suggestion");
-            } else {
-              addAIMessage(`I recommend we maintain sniper position on the **${mission.targetName}**, Commander. Shall I analyze the **${targetToSuggest.targetName}** for you next?`, "suggestion");
-            }
-          } else {
-            if (targetNameLower.includes("rolex")) {
-              addAIMessage(`I recommend we maintain sniper position on the **${mission.targetName}**, Commander. Shall I analyze the **Rolex** for you next?`, "suggestion");
-            } else if (targetNameLower.includes("jordan") || targetNameLower.includes("nike")) {
-              addAIMessage(`I recommend we maintain sniper position on the **${mission.targetName}**, Commander. Shall I analyze the **Nike Jordans** for you next?`, "suggestion");
-            } else {
-              addAIMessage(`I recommend we maintain sniper position on the **${mission.targetName}**, Commander. Shall I analyze the **${targetToSuggest.targetName}** for you next?`, "suggestion");
-            }
-          }
+          // Confirmation Safety: Do NOT ask unrequested follow-up questions
         }
       }, 1500);
     }
@@ -2561,6 +2871,51 @@ export function MissionControl() {
     handleCommand("Analyze Missions");
   };
 
+  // State Mapping: Explicitly connected to flights array
+  // Click Logic: INTERCEPT - Change flight status to 'Secured' and add savings to feed
+  const handleFlightIntercept = (flightId: string) => {
+    if (!trackedFlights || !setTrackedFlights || !addSaving) return;
+    
+    const flight = trackedFlights.find((f: any) => f.id === flightId);
+    if (!flight) return;
+    
+    const currentPrice = Number(flight.currentPrice || flight.originalPrice);
+    const originalPrice = Number(flight.originalPrice || currentPrice);
+    const savings = originalPrice - currentPrice;
+    
+    // Action Buttons: Clicking Intercept marks flight as 'Booked' in Logistics tab
+    const updatedFlights = trackedFlights.map((f: any) => {
+      if (f.id === flightId) {
+        return { ...f, isBooked: true, status: "Booked" as const };
+      }
+      return f;
+    });
+    
+    setTrackedFlights(updatedFlights);
+    
+    // Add savings to the feed
+    if (savings > 0) {
+      addSaving({
+        id: `flight-intercept-${flightId}-${Date.now()}`,
+        title: `Flight Intercepted: ${flight.originCode} → ${flight.destinationCode}`,
+        currentPrice: currentPrice,
+        oldPrice: originalPrice,
+        category: "Travel",
+        createdAt: new Date(),
+      });
+    }
+    
+    addAIMessage(`🟢 **INTERCEPT EXECUTED** 🟢\n\nCommander, flight ${flight.originCode} -> ${flight.destinationCode} has been booked. Savings of ${formatCurrency(savings)} added to feed.`, "general");
+  };
+
+  // Click Logic: HOLD - Trigger exact phrase
+  const handleFlightHold = (flightId: string) => {
+    if (!trackedFlights) return;
+    
+    // Exact phrase as requested
+    addAIMessage("Understood. Monitoring for further drops.", "general");
+  };
+
   return (
     <>
       {/* Floating AI Button */}
@@ -2587,6 +2942,7 @@ export function MissionControl() {
       <AnimatePresence>
         {isOpen && (
           <motion.div
+            ref={chatPanelRef}
             initial={{ opacity: 0, x: 400, scale: 0.9 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 400, scale: 0.9 }}
@@ -2650,6 +3006,25 @@ export function MissionControl() {
                           )
                         )}
                       </p>
+                      {/* Interactive UI: Render two clickable buttons in the chat window */}
+                      {message.flightOptions && message.sender === "ai" && (
+                        <div className="mt-3 flex gap-2">
+                          <Button
+                            onClick={() => handleFlightIntercept(message.flightOptions!.flightId)}
+                            size="sm"
+                            className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-display font-bold text-[10px] uppercase tracking-wider border border-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.5)]"
+                          >
+                            INTERCEPT
+                          </Button>
+                          <Button
+                            onClick={() => handleFlightHold(message.flightOptions!.flightId)}
+                            size="sm"
+                            className="flex-1 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 font-display font-bold text-[10px] uppercase tracking-wider border border-zinc-600"
+                          >
+                            HOLD
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 ))

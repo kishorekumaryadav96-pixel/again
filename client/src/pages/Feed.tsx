@@ -4,10 +4,12 @@ import { SavingsForm } from "@/components/SavingsForm";
 import { SavingsCard } from "@/components/SavingsCard";
 import { SniperCard } from "@/components/SniperCard";
 import { useSavings } from "@/App";
-import { Plus } from "lucide-react";
+import { Plus, Plane, TrendingDown } from "lucide-react";
+import { motion } from "framer-motion";
+import { formatCurrency } from "@/lib/formatCurrency";
 
 export default function Feed() {
-  const { localSavings, localSnipers, deleteSniper, killSniper, killSaving, updateSniperPrice } = useSavings();
+  const { localSavings, localSnipers, deleteSniper, killSniper, killSaving, updateSniperPrice, trackedFlights } = useSavings();
   const [isSavingsFormOpen, setIsSavingsFormOpen] = useState(false);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
 
@@ -92,6 +94,81 @@ export default function Feed() {
             ))}
           </div>
         </section>
+
+        {/* Active Missions (Flights) */}
+        {trackedFlights && trackedFlights.length > 0 && (
+          <section className="px-4 py-6 space-y-6">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xs font-display uppercase tracking-[0.2em] text-zinc-500">Active Missions</h2>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+                <span className="text-xs text-cyan-500 font-medium">
+                  {trackedFlights.length} {trackedFlights.length === 1 ? 'mission' : 'missions'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {trackedFlights.map((flight: any) => {
+                const savingsAmount = flight.originalPrice - flight.currentPrice;
+                const savingsPercentage = Math.round((savingsAmount / flight.originalPrice) * 100);
+                
+                return (
+                  <motion.div
+                    key={flight.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="relative overflow-hidden rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-cyan-500/30 transition-all duration-300"
+                  >
+                    <div className="p-5">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-cyan-500">
+                            <Plane className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-bold text-zinc-300">{flight.originCode}</span>
+                              <span className="text-xs text-zinc-500">→</span>
+                              <span className="text-sm font-bold text-zinc-300">{flight.destinationCode}</span>
+                            </div>
+                            <div className="text-xs text-zinc-400">
+                              {flight.origin} → {flight.destination}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="px-3 py-1 rounded bg-cyan-500/10 border border-cyan-500/30">
+                          <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
+                            TRACKING...
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between pt-4 border-t border-zinc-800/50">
+                        <div>
+                          <div className="text-xs text-zinc-500 mb-1">Current Price</div>
+                          <div className="text-lg font-bold text-green-500">
+                            {formatCurrency(flight.currentPrice)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-zinc-500 mb-1">Savings</div>
+                          <div className="flex items-center gap-1">
+                            <TrendingDown className="w-4 h-4 text-green-500" />
+                            <span className="text-lg font-bold text-green-500">
+                              {formatCurrency(savingsAmount)}
+                            </span>
+                            <span className="text-xs text-green-500 ml-1">({savingsPercentage}%)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Snipers Feed */}
         {localSnipers.length > 0 && (

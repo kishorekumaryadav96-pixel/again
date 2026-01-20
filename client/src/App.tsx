@@ -1,4 +1,5 @@
 import { useState, createContext, useContext, useEffect } from "react";
+import type React from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -7,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { Navigation } from "@/components/Navigation";
 import { BottomNavigation } from "@/components/BottomNavigation";
+import { formatCurrency } from "@/lib/formatCurrency";
 import { MissionControl } from "@/components/MissionControl";
 import Feed from "@/pages/Feed";
 import Snipers from "@/pages/Snipers";
@@ -33,6 +35,7 @@ const SAVINGS_STORAGE_KEY = "savings-feed-items";
 const SNIPERS_STORAGE_KEY = "snipers-items";
 const KILLED_SNIPERS_STORAGE_KEY = "killed-snipers-items";
 const TRACKED_FLIGHTS_KEY = "tracked-flights";
+const SUBSCRIPTIONS_KEY = "subscriptions-items";
 
 interface TrackedFlight {
   id: string;
@@ -42,8 +45,9 @@ interface TrackedFlight {
   destinationCode: string;
   originalPrice: number;
   currentPrice: number;
-  status: "tracked" | "killed";
+  status: "tracked" | "killed" | "Secured" | "Booked";
   trackedAt: Date;
+  isBooked?: boolean; // Track if flight has been intercepted/booked
 }
 
 const mockSavings: Saving[] = [
@@ -73,6 +77,16 @@ const mockSavings: Saving[] = [
   },
 ];
 
+interface Subscription {
+  id: string;
+  name: string;
+  price: number;
+  status: "active" | "ghost" | "terminated";
+  isGhost?: boolean;
+  lastDetected?: Date;
+  category: string;
+}
+
 interface SavingsContextType {
   localSavings: Saving[];
   addSaving: (saving: Saving) => void;
@@ -84,6 +98,10 @@ interface SavingsContextType {
   killSaving: (id: string) => void;
   updateSniperPrice: (id: number, newPrice: number) => void;
   trackedFlights: TrackedFlight[];
+  setTrackedFlights: React.Dispatch<React.SetStateAction<TrackedFlight[]>>;
+  subscriptions: Subscription[];
+  terminateSubscription: (id: string) => void;
+  restoreSubscription: (id: string) => void;
 }
 
 // Helper function to load savings from localStorage
@@ -194,21 +212,9 @@ const SNIPER_ORIGINAL_PRICES_KEY = "sniper-original-prices";
 const SNIPER_CATEGORIES_KEY = "sniper-categories";
 
 // Helper function to load flights from localStorage
+// Ensure 3 Flights: Always return all 3 missions (Mumbai, Delhi, Bangalore)
 function loadFlightsFromStorage(): TrackedFlight[] {
-  try {
-    const stored = localStorage.getItem(TRACKED_FLIGHTS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.map((f: any) => ({
-        ...f,
-        trackedAt: new Date(f.trackedAt),
-      }));
-    }
-  } catch (error) {
-    console.error("Error loading flights from storage:", error);
-  }
-  // Default flight
-  return [
+  const defaultFlights: TrackedFlight[] = [
     {
       id: "1",
       origin: "Mumbai",
@@ -220,6 +226,114 @@ function loadFlightsFromStorage(): TrackedFlight[] {
       status: "tracked",
       trackedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
     },
+    {
+      id: "2",
+      origin: "Delhi",
+      originCode: "DEL",
+      destination: "London",
+      destinationCode: "LHR",
+      originalPrice: 50000,
+      currentPrice: 45000,
+      status: "tracked",
+      trackedAt: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
+    },
+    {
+      id: "3",
+      origin: "Bangalore",
+      originCode: "BLR",
+      destination: "Singapore",
+      destinationCode: "SIN",
+      originalPrice: 15000,
+      currentPrice: 12000,
+      status: "tracked",
+      trackedAt: new Date(Date.now() - 3 * 60 * 60 * 1000), // 3 hours ago
+    },
+  ];
+
+  try {
+    const stored = localStorage.getItem(TRACKED_FLIGHTS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      const loadedFlights = parsed.map((f: any) => ({
+        ...f,
+        trackedAt: new Date(f.trackedAt),
+      }));
+      
+      // Ensure all 3 default flights are present
+      // Merge stored flights with defaults, ensuring all 3 are included
+      const flightMap = new Map(loadedFlights.map((f: any) => [f.id, f]));
+      defaultFlights.forEach((defaultFlight) => {
+        if (!flightMap.has(defaultFlight.id)) {
+          flightMap.set(defaultFlight.id, defaultFlight);
+        }
+      });
+      
+      // Return all flights, ensuring at least the 3 defaults
+      return Array.from(flightMap.values());
+    }
+  } catch (error) {
+    console.error("Error loading flights from storage:", error);
+  }
+  
+  // Return default flights if nothing in storage
+  return defaultFlights;
+}
+
+// Helper function to load subscriptions from localStorage
+function loadSubscriptionsFromStorage(): Subscription[] {
+  try {
+    const stored = localStorage.getItem(SUBSCRIPTIONS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      const loaded = parsed.map((s: any) => ({
+        ...s,
+        lastDetected: s.lastDetected ? new Date(s.lastDetected) : undefined,
+      }));
+      
+      // Subscription Purge: Force Gym Membership to be terminated and hidden
+      const gymIndex = loaded.findIndex((s: any) => 
+        s.name.toLowerCase().includes("gym") || s.name.toLowerCase().includes("membership")
+      );
+      if (gymIndex !== -1) {
+        loaded[gymIndex] = {
+          ...loaded[gymIndex],
+          status: "terminated", // Explicitly terminated
+          isGhost: true,
+        };
+      }
+      
+      return loaded;
+    }
+  } catch (error) {
+    console.error("Error loading subscriptions from storage:", error);
+  }
+  // Default subscriptions - Subscription Purge: Gym Membership must be terminated
+  return [
+    {
+      id: "1",
+      name: "Netflix",
+      price: 649,
+      status: "active",
+      lastDetected: new Date(),
+      category: "Entertainment",
+    },
+    {
+      id: "2",
+      name: "iCloud",
+      price: 149,
+      status: "active",
+      lastDetected: new Date(),
+      category: "Cloud Storage",
+    },
+    {
+      id: "3",
+      name: "Gym Membership",
+      price: 3701,
+      status: "terminated", // Subscription Purge: Explicitly terminated
+      isGhost: true,
+      lastDetected: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+      category: "Fitness",
+    },
   ];
 }
 
@@ -229,6 +343,10 @@ function App() {
   // Persist Kill Details and Total Savings - don't reset on app load
   const [trackedFlights, setTrackedFlights] = useState<TrackedFlight[]>(() => {
     return loadFlightsFromStorage();
+  });
+
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => {
+    return loadSubscriptionsFromStorage();
   });
 
   const [localSavings, setLocalSavings] = useState<Saving[]>(() => {
@@ -298,6 +416,16 @@ function App() {
       console.error("Error saving flights to storage:", error);
     }
   }, [trackedFlights]);
+
+  // Save to localStorage whenever subscriptions change
+  // Subscription Purge: Do NOT override terminated status - preserve it
+  useEffect(() => {
+    try {
+      localStorage.setItem(SUBSCRIPTIONS_KEY, JSON.stringify(subscriptions));
+    } catch (error) {
+      console.error("Error saving subscriptions to storage:", error);
+    }
+  }, [subscriptions]);
 
 
   const addSaving = (saving: Saving) => {
@@ -413,6 +541,53 @@ function App() {
     );
   };
 
+  // Terminate subscription - remove from list and add to Total Savings
+  const terminateSubscription = (id: string) => {
+    const subscription = subscriptions.find((s) => s.id === id);
+    if (subscription) {
+      // Update subscription status to terminated: true
+      setSubscriptions((prev) => 
+        prev.map((s) => 
+          s.id === id ? { ...s, status: "terminated" as const } : s
+        )
+      );
+      
+      // Add terminated amount to Total Savings with specific message
+      const terminatedSaving: Saving = {
+        id: `terminated-${subscription.id}`,
+        title: subscription.name.toLowerCase().includes("gym") 
+          ? `Gym Ghost Eliminated (+${formatCurrency(subscription.price)})`
+          : `Ghost Terminated: ${subscription.name} (+${formatCurrency(subscription.price)})`,
+        oldPrice: subscription.price,
+        currentPrice: 0, // Terminated = no longer paying
+        category: subscription.category,
+        createdAt: new Date(),
+      };
+      addSaving(terminatedSaving);
+    }
+  };
+
+  // Restore subscription - add back to list and remove from Total Savings
+  const restoreSubscription = (id: string) => {
+    // Find the terminated saving entry
+    const terminatedSaving = localSavings.find((s) => s.id === `terminated-${id}`);
+    if (terminatedSaving) {
+      // Restore subscription to active status
+      const restoredSubscription: Subscription = {
+        id: id,
+        name: terminatedSaving.title,
+        price: Number(terminatedSaving.oldPrice),
+        status: "active",
+        lastDetected: new Date(),
+        category: terminatedSaving.category,
+      };
+      setSubscriptions((prev) => [...prev, restoredSubscription]);
+      
+      // Remove from Total Savings by removing the terminated saving entry
+      setLocalSavings((prev) => prev.filter((s) => s.id !== `terminated-${id}`));
+    }
+  };
+
   // Calculate total savings from MY SAVINGS list (localSavings)
   // Total Savings badge sums all items in the 'MY SAVINGS' list
   const totalSavings = (() => {
@@ -441,6 +616,10 @@ function App() {
           killSaving,
           updateSniperPrice,
           trackedFlights,
+          setTrackedFlights,
+          subscriptions,
+          terminateSubscription,
+          restoreSubscription,
         }}>
           <div className="min-h-screen bg-zinc-950 flex">
             <Navigation />

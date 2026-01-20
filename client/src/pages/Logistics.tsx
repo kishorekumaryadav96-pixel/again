@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
-import { Plane, Search, MapPin, TrendingDown, Clock } from "lucide-react";
+import { useState } from "react";
+import { Plane, Search, MapPin, TrendingDown, Clock, X, Target, Calendar } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "@/lib/formatCurrency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSavings } from "@/App";
 
 interface TrackedFlight {
   id: string;
@@ -18,60 +19,52 @@ interface TrackedFlight {
 }
 
 export default function Logistics() {
-  const [destination, setDestination] = useState("");
+  const [sourceCity, setSourceCity] = useState("");
+  const [destinationCity, setDestinationCity] = useState("");
+  const [departureDate, setDepartureDate] = useState("");
   
-  // Load flights from localStorage or use default
-  const loadFlightsFromStorage = (): TrackedFlight[] => {
-    try {
-      const stored = localStorage.getItem("tracked-flights");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.map((f: any) => ({
-          ...f,
-          trackedAt: new Date(f.trackedAt),
-        }));
-      }
-    } catch (error) {
-      console.error("Error loading flights from storage:", error);
-    }
-    // Default flight
-    return [
-      {
-        id: "1",
-        origin: "Mumbai",
-        originCode: "BOM",
-        destination: "Dubai",
-        destinationCode: "DXB",
-        originalPrice: 22000,
-        currentPrice: 18500,
-        status: "tracked",
-        trackedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-      },
-    ];
-  };
-
-  const [trackedFlights, setTrackedFlights] = useState<TrackedFlight[]>(loadFlightsFromStorage);
-
-  // Save flights to localStorage whenever they change
-  useEffect(() => {
-    try {
-      localStorage.setItem("tracked-flights", JSON.stringify(trackedFlights));
-    } catch (error) {
-      console.error("Error saving flights to storage:", error);
-    }
-  }, [trackedFlights]);
+  // Use flights from global state - State Mapping: Explicitly connected to flights array
+  const { trackedFlights, setTrackedFlights } = useSavings();
 
   const handleMonitorFlight = () => {
-    if (!destination.trim()) return;
+    if (!sourceCity.trim() || !destinationCity.trim() || !departureDate.trim()) return;
     
     // In a real app, this would search for flights
     // For now, just show a message or add to tracked flights
-    console.log("Monitoring flights to:", destination);
+    console.log("Monitoring flight:", { sourceCity, destinationCity, departureDate });
+    
+    // Clear form after submission
+    setSourceCity("");
+    setDestinationCity("");
+    setDepartureDate("");
   };
 
   const savingsAmount = (flight: TrackedFlight) => flight.originalPrice - flight.currentPrice;
   const savingsPercentage = (flight: TrackedFlight) =>
     Math.round((savingsAmount(flight) / flight.originalPrice) * 100);
+
+  // The Buttons: Clickable UI elements that update flight's isBooked status
+  const handleAbort = (flightId: string) => {
+    if (!setTrackedFlights) return;
+    const updatedFlights = trackedFlights.filter((f: any) => f.id !== flightId);
+    setTrackedFlights(updatedFlights);
+  };
+
+  const handleIntercept = (flight: TrackedFlight) => {
+    if (!setTrackedFlights) return;
+    // Action Buttons: Clicking Intercept marks flight as 'Booked' in Logistics tab
+    const updatedFlights = trackedFlights.map((f: any) => {
+      if (f.id === flight.id) {
+        return { ...f, isBooked: true, status: "Booked" as const };
+      }
+      return f;
+    });
+    setTrackedFlights(updatedFlights);
+    
+    // Open booking URL with affiliate tag
+    const bookingUrl = `https://example.com/flights?origin=${flight.originCode}&dest=${flight.destinationCode}&tag=commander-21`;
+    window.open(bookingUrl, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 pb-24">
@@ -90,19 +83,40 @@ export default function Logistics() {
           </h2>
           
           <div className="space-y-3">
+            {/* Source City Input */}
             <div className="relative">
               <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <Input
                 type="text"
-                placeholder="Enter destination (e.g., Dubai, New York)"
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
+                placeholder="Source City (From)"
+                value={sourceCity}
+                onChange={(e) => setSourceCity(e.target.value)}
                 className="bg-zinc-950 border-zinc-800 pl-10 text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleMonitorFlight();
-                  }
-                }}
+              />
+            </div>
+            
+            {/* Destination City Input */}
+            <div className="relative">
+              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <Input
+                type="text"
+                placeholder="Destination City (To)"
+                value={destinationCity}
+                onChange={(e) => setDestinationCity(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 pl-10 text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500"
+              />
+            </div>
+            
+            {/* Departure Date Picker */}
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <Input
+                type="date"
+                placeholder="Departure Date"
+                value={departureDate}
+                onChange={(e) => setDepartureDate(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 pl-10 text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500"
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
             
@@ -173,7 +187,14 @@ export default function Logistics() {
                     {flight.status === "tracked" && (
                       <div className="px-3 py-1 rounded bg-cyan-500/10 border border-cyan-500/30">
                         <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
-                          Tracked
+                          TRACKING...
+                        </span>
+                      </div>
+                    )}
+                    {flight.status === "Booked" && (
+                      <div className="px-3 py-1 rounded bg-green-500/10 border border-green-500/30">
+                        <span className="text-[10px] font-bold text-green-400 uppercase tracking-wider">
+                          BOOKED
                         </span>
                       </div>
                     )}
@@ -213,7 +234,7 @@ export default function Logistics() {
                       </div>
                     </div>
 
-                    {/* Footer with Time */}
+                    {/* Footer with Time and Action Buttons */}
                     <div className="flex items-center justify-between pt-2 border-t border-zinc-800/30">
                       <div className="flex items-center gap-1.5 text-zinc-400">
                         <Clock className="w-3.5 h-3.5" />
@@ -221,6 +242,28 @@ export default function Logistics() {
                           Tracked {new Date(flight.trackedAt).toLocaleDateString()}
                         </span>
                       </div>
+                      
+                      {/* Action Buttons - Only show if not already Booked */}
+                      {flight.status !== "Booked" && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            onClick={() => handleAbort(flight.id)}
+                            size="sm"
+                            className="px-3 py-1.5 bg-red-950/90 hover:bg-red-900/90 text-red-400 font-display font-bold text-[10px] uppercase tracking-wider border border-red-500/50 hover:border-red-400"
+                          >
+                            <X className="w-3 h-3 mr-1" />
+                            ABORT
+                          </Button>
+                          <Button
+                            onClick={() => handleIntercept(flight)}
+                            size="sm"
+                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-display font-bold text-[10px] uppercase tracking-wider border border-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.5)]"
+                          >
+                            <Target className="w-3 h-3 mr-1" />
+                            INTERCEPT
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
