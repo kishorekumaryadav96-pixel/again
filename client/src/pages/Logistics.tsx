@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plane, Search, MapPin, TrendingDown, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatCurrency } from "@/lib/formatCurrency";
@@ -19,19 +19,47 @@ interface TrackedFlight {
 
 export default function Logistics() {
   const [destination, setDestination] = useState("");
-  const [trackedFlights, setTrackedFlights] = useState<TrackedFlight[]>([
-    {
-      id: "1",
-      origin: "Mumbai",
-      originCode: "BOM",
-      destination: "Dubai",
-      destinationCode: "DXB",
-      originalPrice: 22000,
-      currentPrice: 18500,
-      status: "tracked",
-      trackedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-    },
-  ]);
+  
+  // Load flights from localStorage or use default
+  const loadFlightsFromStorage = (): TrackedFlight[] => {
+    try {
+      const stored = localStorage.getItem("tracked-flights");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.map((f: any) => ({
+          ...f,
+          trackedAt: new Date(f.trackedAt),
+        }));
+      }
+    } catch (error) {
+      console.error("Error loading flights from storage:", error);
+    }
+    // Default flight
+    return [
+      {
+        id: "1",
+        origin: "Mumbai",
+        originCode: "BOM",
+        destination: "Dubai",
+        destinationCode: "DXB",
+        originalPrice: 22000,
+        currentPrice: 18500,
+        status: "tracked",
+        trackedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+      },
+    ];
+  };
+
+  const [trackedFlights, setTrackedFlights] = useState<TrackedFlight[]>(loadFlightsFromStorage);
+
+  // Save flights to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem("tracked-flights", JSON.stringify(trackedFlights));
+    } catch (error) {
+      console.error("Error saving flights to storage:", error);
+    }
+  }, [trackedFlights]);
 
   const handleMonitorFlight = () => {
     if (!destination.trim()) return;

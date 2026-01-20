@@ -135,6 +135,15 @@ export function MissionControl() {
     }
   }, [isOpen]);
 
+  // Star's introduction when panel first opens
+  const [hasIntroduced, setHasIntroduced] = useState(false);
+  useEffect(() => {
+    if (isOpen && !hasIntroduced && messages.length === 0) {
+      setHasIntroduced(true);
+      addAIMessage("Hello Commander, I'm Star, your AI assistant. I'm here to help you track snipers, monitor flights, and manage your financial targets. How can I assist you today?", "general");
+    }
+  }, [isOpen, hasIntroduced, messages.length]);
+
   // Temporarily set Rolex target price to ₹500 higher than current price to trigger green glow
   useEffect(() => {
     if (rolexTargetUpdatedRef.current) return; // Only update once
@@ -166,7 +175,7 @@ export function MissionControl() {
     }
   }, [localSnipers, deleteSniper, addSniper]);
 
-  // Sentinel Pulse: Live market simulation - update prices +/- ₹20 every 8 seconds
+  // Star Pulse: Live market simulation - update prices +/- ₹20 every 8 seconds
   useEffect(() => {
     if (localSnipers.length === 0) return;
 
@@ -634,6 +643,73 @@ export function MissionControl() {
 
     // Simulate AI thinking
     setTimeout(() => {
+      // PRIORITY 0: MULTI-INTENT HANDLING - Handle complex queries with multiple intents
+      const hasIdentityQuery = /who are you|what are you|identify yourself/i.test(command);
+      const hasFlightStatusQuery = /flight status|flight.*status|my flight|tracked flight|dubai flight|bom.*dxb|dxb.*bom/i.test(command);
+      const hasSniperStatusQuery = /sniper status|mission status|target status/i.test(command);
+      
+      // INTERCEPT command: Buy/Book flight
+      const hasInterceptCommand = /intercept|buy.*flight|book.*flight|purchase.*flight|book the flight|buy the flight/i.test(command);
+      if (hasInterceptCommand) {
+        // Get real-time flight data from localStorage
+        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
+        const dubaiFlight = trackedFlights.find((f: any) => 
+          f.destinationCode === "DXB" || f.originCode === "BOM" || 
+          f.destination?.toLowerCase().includes("dubai") ||
+          (f.originCode === "BOM" && f.destinationCode === "DXB")
+        );
+        
+        if (dubaiFlight) {
+          const currentPrice = Number(dubaiFlight.currentPrice || dubaiFlight.originalPrice);
+          const originalPrice = Number(dubaiFlight.originalPrice || currentPrice);
+          const savings = originalPrice - currentPrice;
+          
+          // Execute INTERCEPT - open booking URL with affiliate tag
+          const bookingUrl = `https://example.com/flights/BOM-DXB?price=${currentPrice}`;
+          const separator = bookingUrl.includes('?') ? '&' : '?';
+          const affiliateUrl = `${bookingUrl}${separator}tag=commander-21`;
+          window.open(affiliateUrl, '_blank', 'noopener,noreferrer');
+          
+          addAIMessage(`INTERCEPT executed, Commander! Opening booking for BOM → DXB at ${formatCurrency(currentPrice)}. You're saving ${formatCurrency(savings)} on this flight.`, "general");
+        } else {
+          addAIMessage("Commander, no tracked flight found to intercept. Please track a flight first.", "general");
+        }
+        return;
+      }
+      
+      if (hasIdentityQuery && (hasFlightStatusQuery || hasSniperStatusQuery)) {
+        // Multi-intent: Identity + Status
+        let response = "I'm Star, your tactical AI assistant, Commander. ";
+        
+        if (hasFlightStatusQuery) {
+          // Get real-time flight data from localStorage (real-time from arrays)
+          const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
+          const dubaiFlight = trackedFlights.find((f: any) => 
+            f.destinationCode === "DXB" || f.originCode === "BOM" || 
+            f.destination?.toLowerCase().includes("dubai") ||
+            (f.originCode === "BOM" && f.destinationCode === "DXB")
+          );
+          
+          if (dubaiFlight) {
+            // Use real-time values from the flight data
+            const currentPrice = Number(dubaiFlight.currentPrice || dubaiFlight.originalPrice);
+            const originalPrice = Number(dubaiFlight.originalPrice || currentPrice);
+            const savings = originalPrice - currentPrice;
+            response += `Your BOM → DXB flight status: Price: ${formatCurrency(currentPrice)}, Savings: ${formatCurrency(savings)}. `;
+          } else {
+            response += "No tracked flights found. ";
+          }
+        }
+        
+        if (hasSniperStatusQuery && localSnipers.length > 0) {
+          // Use real-time sniper data
+          response += `You have ${localSnipers.length} active sniper${localSnipers.length > 1 ? 's' : ''} tracking.`;
+        }
+        
+        addAIMessage(response.trim(), "general");
+        return;
+      }
+      
       // PRIORITY 1: FUZZY PRODUCT MATCHING - Extract product name from command first
       // This prioritizes product names even if other words are confusing
       const matchedProductResult = extractProductFromCommand(command);
@@ -877,13 +953,29 @@ export function MissionControl() {
           return current < original;
         })() : false;
         
+        // Get flights data from localStorage (stored by Logistics page)
+        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
+        const dubaiFlight = trackedFlights.find((f: any) => 
+          f.destinationCode === "DXB" || f.destination?.toLowerCase().includes("dubai")
+        );
+        
+        // Calculate flight price change if available
+        let flightUpdate = "";
+        if (dubaiFlight && dubaiFlight.originalPrice && dubaiFlight.currentPrice) {
+          const priceChange = dubaiFlight.currentPrice - dubaiFlight.originalPrice;
+          if (Math.abs(priceChange) > 0) {
+            const changeText = priceChange > 0 ? `shifted up ₹${Math.abs(priceChange).toLocaleString('en-IN')}` : `shifted down ₹${Math.abs(priceChange).toLocaleString('en-IN')}`;
+            flightUpdate = ` By the way, the Dubai flight just ${changeText}.`;
+          }
+        }
+        
         const dynamicGreetings = [
-          "I am functioning at peak efficiency, Commander. Ready for your next objective.",
+          `I'm functioning at 100%, Commander.${flightUpdate || " Ready for your next objective."}`,
           hasRolexSavings 
-            ? `Systems are green and I am feeling excellent. Hope your day is as successful as our Rolex mission!`
-            : "Systems are green and I am feeling excellent. Hope your day is as successful as our missions!",
-          "Reporting for duty! I am doing great and ready to secure some savings. What is on your mind?",
-          "Excellent as always! Your portfolio is looking sharp today. How can I assist?"
+            ? `Systems are green and I am feeling excellent. Hope your day is as successful as our Rolex mission!${flightUpdate}`
+            : `Systems are green and I am feeling excellent. Hope your day is as successful as our missions!${flightUpdate}`,
+          `Reporting for duty! I am doing great and ready to secure some savings.${flightUpdate} What is on your mind?`,
+          `Excellent as always! Your portfolio is looking sharp today.${flightUpdate} How can I assist?`
         ];
         
         // Dynamic Personality (The Randomizer): Use Math.floor(Math.random() * greetings.length) to pick unique response
@@ -896,7 +988,19 @@ export function MissionControl() {
       if (isWhatCanYouDo) {
         // Capability Menu: Dynamic response based on active missions
         const activeMissionCount = localSnipers.length;
-        addAIMessage(`I am monitoring your luxury and fashion targets. I can analyze price differences, execute purchase orders, or give you a full status report on your ${activeMissionCount} active missions.`, "general");
+        // Get real-time flight count
+        const trackedFlights = JSON.parse(localStorage.getItem("tracked-flights") || "[]");
+        const flightCount = trackedFlights.length;
+        
+        let response = `I'm Star, your tactical AI assistant. I can analyze price differences, execute purchase orders, track flights, and give you status reports. `;
+        if (activeMissionCount > 0) {
+          response += `You have ${activeMissionCount} active sniper${activeMissionCount > 1 ? 's' : ''}. `;
+        }
+        if (flightCount > 0) {
+          response += `${flightCount} tracked flight${flightCount > 1 ? 's' : ''}. `;
+        }
+        response += `How can I assist you, Commander?`;
+        addAIMessage(response, "general");
         return;
       }
       
@@ -2491,9 +2595,9 @@ export function MissionControl() {
                 </div>
                 <div>
                   <h3 className="text-lg font-display font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-                    MISSION CONTROL
+                    STAR
                   </h3>
-                  <p className="text-xs text-zinc-400">AI Assistant Online</p>
+                  <p className="text-xs text-zinc-400">Star Online</p>
                 </div>
               </div>
               <button
@@ -2511,7 +2615,7 @@ export function MissionControl() {
                   <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-600/20 flex items-center justify-center mb-4">
                     <Sparkles className="w-8 h-8 text-cyan-400" />
                   </div>
-                  <p className="text-sm text-zinc-400 mb-2">Mission Control Ready</p>
+                  <p className="text-sm text-zinc-400 mb-2">Star Ready</p>
                   <p className="text-xs text-zinc-500">Click "Analyze Missions" to begin</p>
                 </div>
               ) : (
@@ -2581,7 +2685,7 @@ export function MissionControl() {
                     ref={inputRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Type a command or click mic..."
+                    placeholder="Command Star..."
                     className="bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-500 focus:ring-cyan-500/20 pr-10"
                   />
                   <button
