@@ -1,12 +1,15 @@
 import { User, Trophy, Target, Shield } from "lucide-react";
 import { motion } from "framer-motion";
+import { useSavings } from "@/App";
 
 export default function Profile() {
-  // Hardcoded stats for visual polish, in real app fetch from /api/users/me
+  const { localSnipers, localSavings, totalSavings } = useSavings();
+  
+  // Calculate stats from actual data
   const stats = [
-    { label: "Kills Confirmed", value: "12", icon: Trophy, color: "text-green-500" },
-    { label: "Active Snipers", value: "5", icon: Target, color: "text-cyan-500" },
-    { label: "Total Saved", value: "₹45k", icon: Shield, color: "text-purple-500" },
+    { label: "Kills Confirmed", value: localSavings.length.toString(), icon: Trophy, color: "text-green-500" },
+    { label: "Active Snipers", value: localSnipers.length.toString(), icon: Target, color: "text-cyan-500" },
+    { label: "Total Saved", value: `₹${(totalSavings / 1000).toFixed(0)}k`, icon: Shield, color: "text-purple-500" },
   ];
 
   return (
@@ -49,22 +52,6 @@ export default function Profile() {
           ))}
         </div>
 
-        <div className="mt-8 space-y-4">
-          <h2 className="text-sm font-display uppercase tracking-widest text-zinc-500 pl-1">Recent Activity</h2>
-          
-          {[1, 2, 3].map((item) => (
-            <div key={item} className="flex items-center gap-4 py-3 border-b border-zinc-900">
-              <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center">
-                <Trophy className="w-4 h-4 text-zinc-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm text-zinc-300">Target eliminated: <span className="text-cyan-500">Sony XM5</span></p>
-                <p className="text-xs text-zinc-600">2 hours ago</p>
-              </div>
-              <span className="text-green-500 font-mono text-xs">+500 XP</span>
-            </div>
-          ))}
-        </div>
       </main>
     </div>
   );
